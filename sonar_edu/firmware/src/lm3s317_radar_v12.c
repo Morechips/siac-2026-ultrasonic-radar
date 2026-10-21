@@ -68,16 +68,27 @@
 #define SERVO     PB_DATA(0x01u)   /* PB0 */
 /* Buttons sit on PB1/PB5 by default. Build with -DBUTTONS_ON_PA45 to move them
  * to PA4/PA5, which is useful if the PB1/PB5 pads cannot be read back on a
- * given model or board revision. */
+ * given model or board revision.
+ *
+ * IMPORTANT: a masked GPIODATA access returns the selected pins IN THEIR NORMAL
+ * BIT POSITIONS, so a single-pin read must shift by the pin number before
+ * masking. Reading `BUTTON1 & 1u` on PB1 always yields 0. */
 #ifdef BUTTONS_ON_PA45
 #define BUTTON1   PA_DATA(0x10u)   /* PA4, pin 21 */
 #define BUTTON2   PA_DATA(0x20u)   /* PA5, pin 22 */
+#define B1_BIT    4u
+#define B2_BIT    5u
 #else
 #define BUTTON1   PB_DATA(0x02u)   /* PB1, pin 30 */
 #define BUTTON2   PB_DATA(0x20u)   /* PB5, pin 44 */
+#define B1_BIT    1u
+#define B2_BIT    5u
 #endif
 #define SCL       PB_DATA(0x04u)   /* PB2 */
 #define SDA       PB_DATA(0x08u)   /* PB3 */
+#define SCL_BIT   0x04u
+#define SDA_BIT   0x08u
+#define SDA_POS   3u
 
 #define PB_DIR_BASE   ((1u << 0) | (1u << 2))        /* servo + SCL outputs */
 #define PB_DIR_SDA_ON (PB_DIR_BASE | (1u << 3))      /* SDA driven        */
@@ -138,12 +149,12 @@ static void i2c_delay(void) { wait_us(I2C_HALF_US); }
 
 static void sda_low(void)  { PB_DIR = PB_DIR_SDA_ON;  SDA = 0u; }
 static void sda_free(void) { PB_DIR = PB_DIR_SDA_OFF; }
-static uint32_t sda_level(void) { return SDA & 1u; }
+static uint32_t sda_level(void) { return (SDA >> SDA_POS) & 1u; }
 
 static void i2c_start(void)
 {
     sda_free();
-    SCL = 1u; i2c_delay();
+    SCL = SCL_BIT; i2c_delay();
     sda_low(); i2c_delay();
     SCL = 0u; i2c_delay();
 }
@@ -151,7 +162,7 @@ static void i2c_start(void)
 static void i2c_stop(void)
 {
     sda_low(); i2c_delay();
-    SCL = 1u; i2c_delay();
+    SCL = SCL_BIT; i2c_delay();
     sda_free(); i2c_delay();
 }
 
@@ -159,7 +170,7 @@ static void i2c_write_bit(uint32_t bit)
 {
     if (bit != 0u) { sda_free(); } else { sda_low(); }
     i2c_delay();
-    SCL = 1u; i2c_delay();
+    SCL = SCL_BIT; i2c_delay();
     SCL = 0u; i2c_delay();
 }
 
@@ -168,19 +179,22 @@ static uint32_t i2c_read_bit(void)
     uint32_t value;
     sda_free();
     i2c_delay();
-    SCL = 1u; i2c_delay();
+    SCL = SCL_BIT; i2c_delay();
     value = sda_level();
     SCL = 0u; i2c_delay();
     return value;
 }
 
-static void i2c_write_byte(uint8_t value)
+/* Returns the ACK bit as seen on SDA: 0 = the device acknowledged, 1 = no ack.
+ * Reported in the heartbeat so a dead bus is distinguishable from a write that
+ * is accepted but not stored (for example a floating WP pin). */
+static uint32_t i2c_write_byte(uint8_t value)
 {
     unsigned i;
     for (i = 0u; i < 8u; i++) {
         i2c_write_bit((value >> (7u - i)) & 1u);
     }
-    (void)i2c_read_bit();       /* ACK bit: sampled and deliberately ignored */
+    return i2c_read_bit();
 }
 
 static uint8_t i2c_read_byte(uint32_t ack)
@@ -200,6 +214,8 @@ static uint8_t i2c_read_byte(uint32_t ack)
 #define EEPROM_READ_ADDR  0xA1u
 
 static uint32_t log_slot;
+static volatile uint32_t ack_device = 1u;   /* 0 = EEPROM answered its address */
+static volatile uint32_t ack_word = 1u;     /* 0 = EEPROM answered the word address */
 
 static uint32_t eeprom_address_for(uint32_t slot)
 {
@@ -210,9 +226,9 @@ static void eeprom_write_page(uint32_t address, const uint8_t *data)
 {
     unsigned i;
     i2c_start();
-    i2c_write_byte(EEPROM_WRITE_ADDR);
-    i2c_write_byte((uint8_t)(address & 0xFFu));
-    for (i = 0u; i < 8u; i++) { i2c_write_byte(data[i]); }
+    ack_device = i2c_write_byte(EEPROM_WRITE_ADDR);
+    ack_word = i2c_write_byte((uint8_t)(address & 0xFFu));
+    for (i = 0u; i < 8u; i++) { (void)i2c_write_byte(data[i]); }
     i2c_stop();
     /* 24C02C needs 10 ms after STOP; the next bus access is one scan step away. */
 }
@@ -221,10 +237,10 @@ static void eeprom_read_page(uint32_t address, uint8_t *data)
 {
     unsigned i;
     i2c_start();
-    i2c_write_byte(EEPROM_WRITE_ADDR);
-    i2c_write_byte((uint8_t)(address & 0xFFu));
+    (void)i2c_write_byte(EEPROM_WRITE_ADDR);
+    (void)i2c_write_byte((uint8_t)(address & 0xFFu));
     i2c_start();                       /* repeated start */
-    i2c_write_byte(EEPROM_READ_ADDR);
+    (void)i2c_write_byte(EEPROM_READ_ADDR);
     for (i = 0u; i < 8u; i++) {
         data[i] = i2c_read_byte((i < 7u) ? 1u : 0u);
     }
@@ -268,7 +284,9 @@ static unsigned measure(uint32_t *width)
     start = ticks();
     while (ECHO) { if (elapsed(start) >= 240000u) { return 3u; } }
     *width = (elapsed(start) + 4u) / TICKS_PER_US;
-    return (*width < 116u || *width > 23200u) ? 4u : 0u;
+    /* 2500 mm is the range the dashboard accepts (page limit = 2500 mm);
+     * anything longer is reported as NO_HIT instead of silently rejected later. */
+    return (*width < 116u || *width > 14500u) ? 4u : 0u;
 }
 
 /* ------------------------------------------------------------------- servo */
@@ -350,10 +368,13 @@ static uint32_t last1 = 1u, last2 = 1u;
 static uint32_t stable1, stable2;
 static uint32_t armed1, armed2;
 
+static uint32_t b1_level(void) { return (BUTTON1 >> B1_BIT) & 1u; }
+static uint32_t b2_level(void) { return (BUTTON2 >> B2_BIT) & 1u; }
+
 static void buttons_init(void)
 {
-    last1 = ((BUTTON1 & 1u) == 0u) ? 0u : 1u;
-    last2 = ((BUTTON2 & 1u) == 0u) ? 0u : 1u;
+    last1 = b1_level();
+    last2 = b2_level();
     stable1 = 0u; stable2 = 0u;
     armed1 = (last1 != 0u) ? 1u : 0u;
     armed2 = (last2 != 0u) ? 1u : 0u;
@@ -376,9 +397,15 @@ static void debounce(uint32_t raw, uint32_t *last, uint32_t *stable, uint32_t *a
 static void report_buttons(void)
 {
     tx_text("BTN,PB1=");
-    tx_push(((BUTTON1 & 1u) != 0u) ? '1' : '0');
+    tx_push((b1_level() != 0u) ? '1' : '0');
     tx_text(",PB5=");
-    tx_push(((BUTTON2 & 1u) != 0u) ? '1' : '0');
+    tx_push((b2_level() != 0u) ? '1' : '0');
+    tx_text(",ack_dev=");
+    tx_push((ack_device == 0u) ? '0' : '1');
+    tx_text(",ack_word=");
+    tx_push((ack_word == 0u) ? '0' : '1');
+    tx_text(",slot=");
+    tx_num(log_slot);
     tx_text("\r\n");
 }
 
@@ -386,8 +413,8 @@ static void poll_buttons(void)
 {
     uint32_t pressed1 = 0u, pressed2 = 0u;
 
-    debounce(((BUTTON1 & 1u) == 0u) ? 0u : 1u, &last1, &stable1, &armed1, &pressed1);
-    debounce(((BUTTON2 & 1u) == 0u) ? 0u : 1u, &last2, &stable2, &armed2, &pressed2);
+    debounce(b1_level(), &last1, &stable1, &armed1, &pressed1);
+    debounce(b2_level(), &last2, &stable2, &armed2, &pressed2);
 
     if (pressed1 != 0u) {
         running = (running != 0u) ? 0u : 1u;
@@ -429,7 +456,7 @@ static void init(void)
     PB_DEN = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5);
 #endif
     SERVO = 0u;
-    SCL = 1u;
+    SCL = SCL_BIT;
     sda_free();
 
     UART_CTL = 0u;
@@ -445,6 +472,49 @@ static void init(void)
     T_CTL = 1u;
 }
 
+static void tx_hex2(uint8_t value)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    tx_push(hex[(value >> 4) & 0xFu]);
+    tx_push(hex[value & 0xFu]);
+}
+
+/* Writes a known pattern to page 0 (which the log ring never uses) and reads it
+ * straight back. This separates "the bus is dead" from "the device answers but
+ * refuses to store" (a floating WP pin does exactly the latter). */
+static void eeprom_selftest(void)
+{
+    uint8_t out[8];
+    uint8_t in[8];
+    unsigned i;
+    uint32_t ok = 1u;
+
+    for (i = 0u; i < 8u; i++) { out[i] = (uint8_t)(0x11u * (i + 1u)); }
+    eeprom_write_page(0u, out);
+    wait_us(15000u);
+    eeprom_read_page(0u, in);
+    for (i = 0u; i < 8u; i++) { if (in[i] != out[i]) { ok = 0u; } }
+
+    if (ok != 0u) {
+        tx_text("INFO,EEPROM_SELFTEST_OK\r\n");
+    } else {
+        tx_text("INFO,EEPROM_SELFTEST_FAIL,wr0=");
+        tx_hex2(out[0]);
+        tx_text(",rd0=");
+        tx_hex2(in[0]);
+        tx_text(",wr7=");
+        tx_hex2(out[7]);
+        tx_text(",rd7=");
+        tx_hex2(in[7]);
+        tx_text(",ack_dev=");
+        tx_push((ack_device == 0u) ? '0' : '1');
+        tx_text(",ack_word=");
+        tx_push((ack_word == 0u) ? '0' : '1');
+        tx_text("\r\n");
+        tx_text("HINT,CHECK_WP_PIN_7_TO_GND_AND_A0_A1_A2_TO_GND\r\n");
+    }
+}
+
 int main(void)
 {
     uint32_t slot = 0u;
@@ -458,6 +528,7 @@ int main(void)
 
     tx_text("BOOT,LM3S317_RADAR_V11,9600_8N1,SONAR_3V3,EEPROM_24C02C,LOG31\r\n");
     tx_text("INFO,BTN1_RUN_STOP,BTN2_REPLAY\r\n");
+    eeprom_selftest();
 
     for (;;) {
         uint32_t frame_start = ticks();

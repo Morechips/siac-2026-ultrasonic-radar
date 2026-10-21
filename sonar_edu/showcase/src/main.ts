@@ -5,6 +5,10 @@ import { ScanHistory, TeachingTimeline, simulate, advanceScan, STEP_MS, SOUND_MM
 import type { InputMode, Preset, Sample } from './model.ts';
 import { LineDecoder, encodeSample } from './protocol.ts';
 import { SerialConnection } from './serial.ts';
+import { MeasurementSession } from './session.ts';
+import type { DisplayUpdate } from './session.ts';
+import { captureSnapshot } from './capture.ts';
+import { mountClassroom } from './classroom.ts';
 
 const icons: Record<string, string> = {
   radar: '<path d="M4.2 15.8A9 9 0 1 1 20.8 9M7 13a5.5 5.5 0 1 1 10-5M10 11a2 2 0 0 1 3-2M12 12l7-7M12 12v8M4 20h16"/>',
@@ -50,7 +54,7 @@ document.querySelector('#app')!.innerHTML = `
 
         <section class="panel radar-panel" aria-labelledby="radar-title">
           <div class="panel-heading"><div class="panel-title"><span class="section-number">02</span><h2 id="radar-title">空间回声</h2></div><span class="live-badge" id="live-badge"><i></i><span id="live-label">扫描中</span></span></div>
-          <div class="measurements"><div><span class="metric-label">当前测距</span><div class="distance-reading"><strong id="distance">—</strong><span>cm</span></div></div><div class="angle-metric"><span class="metric-label">探头角度</span><div><strong id="angle">90</strong><span>°</span></div></div></div>
+          <div class="measurements"><div><span class="metric-label" id="distance-label">当前测距</span><div class="distance-reading"><strong id="distance">—</strong><span>cm</span></div></div><div class="angle-metric"><span class="metric-label">探头角度</span><div><strong id="angle">90</strong><span>°</span></div></div></div>
           <div class="radar-chart"><canvas id="radar" aria-label="实时扇形雷达扫描结果"></canvas></div>
           <div class="radar-legend"><span><i class="dot green"></i>障碍回声</span><span><i class="line-key"></i>扫描轨迹</span><span class="range-label">RANGE 2.5 m</span></div>
           <div class="radar-summary"><div><span class="metric-label">本程最近</span><strong id="nearest">—<small> cm</small></strong></div><div><span class="metric-label">探测状态</span><strong class="status-text" id="measure-status">等待测量</strong></div><div><span class="metric-label">扫描轨迹</span><strong><span id="trail-count">0</span><small> / 13</small></strong></div></div>
@@ -70,6 +74,7 @@ document.querySelector('#app')!.innerHTML = `
         <div class="teaching-controls" id="teaching-controls" hidden><label class="angle-control" for="teaching-angle">测量方向 <input id="teaching-angle" type="range" min="0" max="180" step="3" value="90"><output id="teaching-angle-value">90°</output></label><span class="slow-label">${icon('wave')}慢放示意</span><button class="button subtle" id="repeat-lesson">${icon('reset')}重新测量</button><button class="button primary" id="next-step">下一步 · 转向定位 ${icon('arrow')}</button></div>
         <div class="teaching-invitation" id="teaching-invitation"><span>想看清一次回声如何发生？</span><button id="enter-lesson">进入分步教学 ${icon('arrow')}</button></div>
       </section>
+      <div id="classroom"></div>
       <footer><span>声探实验室<span class="footer-separator">/</span>超声扫描雷达教学演示</span><span id="footer-note">几何场景模拟 · 声速取 343 m/s</span></footer>
     </main>
   </div>
@@ -78,8 +83,8 @@ document.querySelector('#app')!.innerHTML = `
     <label class="field-label" for="input-source">数据来源</label><select class="field" id="input-source"><option value="demo">内置模拟</option><option value="manual">字符串输入</option><option value="serial">浏览器串口</option></select>
     <p class="field-help" id="source-help">使用预设障碍物，实时计算扫描交点。</p>
     <section id="serial-section" hidden><div class="settings-section-heading"><h3>串口连接</h3><span class="source-tag">8N1</span></div><label class="field-label" for="baud">波特率</label><select class="field" id="baud"><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select><div class="serial-actions"><button class="button primary" id="connect-serial">${icon('link')}选择串口并连接</button><button class="button outline" id="disconnect-serial" disabled>断开</button></div><p class="field-help" id="serial-message" role="status">请使用桌面 Chrome；连接后等待数据。</p><p class="field-help">暂停仅冻结展示，后台继续接收。恢复时显示最新样本。</p></section>
-    <section id="manual-section" hidden><h3>输入测量字符串</h3><p class="field-help">每行一笔测量；提交多行时按顺序更新轨迹。</p><label class="sr-only" for="manual-input">测量字符串</label><textarea id="manual-input" spellcheck="false" rows="6">SCAN,1,60,1400,OK,SIM\nSCAN,2,90,850,OK,SIM\nSCAN,3,120,NA,TIMEOUT,PROTEUS</textarea><button class="button primary" id="submit-manual">应用字符串 ${icon('arrow')}</button><p class="field-help" id="manual-message" role="status"></p></section>
-    <details class="protocol-reference"><summary>查看数据协议 ${icon('chevron')}</summary><p>逐行 CSV · 距离单位 mm</p><code>SCAN,42,90,850,OK,SIM</code><dl><dt>42</dt><dd>序号（非负整数）</dd><dt>90</dt><dd>角度 0°～180°</dd><dt>850</dt><dd>距离 1～2500 mm；无回波用 NA</dd><dt>OK</dt><dd>OK / NO_HIT / TIMEOUT</dd><dt>SIM</dt><dd>SIM / PROTEUS / DEVICE</dd></dl><p>兼容现有固件11列CSV。0°向右，90°向前，180°向左。</p></details>
+    <section id="manual-section" hidden><h3>输入测量字符串</h3><p class="field-help">每行一笔测量；提交多行时按顺序更新轨迹。手动教学示例请标 SIM。</p><label class="sr-only" for="manual-input">测量字符串</label><textarea id="manual-input" spellcheck="false" rows="6">SCAN,1,60,1400,OK,SIM\nSCAN,2,90,850,OK,SIM\nSCAN,3,120,NA,TIMEOUT,SIM</textarea><button class="button primary" id="submit-manual">应用字符串 ${icon('arrow')}</button><p class="field-help" id="manual-message" role="status"></p></section>
+    <details class="protocol-reference"><summary>查看数据协议 ${icon('chevron')}</summary><p>逐行 CSV · 距离单位 mm</p><code>SCAN,42,90,850,OK,SIM</code><dl><dt>42</dt><dd>序号（非负整数）</dd><dt>90</dt><dd>角度 0°～180°</dd><dt>850</dt><dd>显示量程 1～2500 mm；无可靠量程内测量用 NA</dd><dt>OK</dt><dd>OK / NO_HIT / TIMEOUT</dd><dt>SIM</dt><dd>SIM / PROTEUS / DEVICE</dd></dl><p>存储回放：LOG,序号,角度,距离或NA,状态，来源为 Proteus，始终标为历史。INFO,REPLAY_START/END 标记回放边界。</p><p>兼容现有固件11列CSV。0°向右，90°向前，180°向左。超出2500mm的有效帧显示为无可靠量程内测量。</p></details>
     <section class="log-section"><div class="settings-section-heading"><h3>数据日志</h3><button class="text-button" id="clear-log">清空</button></div><ol id="log" aria-label="数据日志"><li class="log-info">实验室已就绪。</li></ol></section>
   </div></dialog>
   <div id="toast" role="status" aria-live="polite"></div>
@@ -89,6 +94,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
 const history = new ScanHistory();
 const teaching = new TeachingTimeline();
 const decoder = new LineDecoder();
+const external = new MeasurementSession();
 const radar = new RadarView($<HTMLCanvasElement>('radar'));
 let scene: LabScene | null = null;
 try { scene = new LabScene($('scene')); } catch (err) { $('scene-fallback').hidden = false; console.error(err); }
@@ -101,10 +107,11 @@ let direction: 1 | -1 = 1;
 let sequence = 0;
 let accumulator = 0;
 let latest: Sample | null = null;
-let pending: Sample | null = null;
+let invalidMeasurement: 'live' | 'replay' | null = null;
 let lessonSample = simulate(90, 0, preset);
 let lessonApplied = false;
 let lastExternalAt = 0;
+let lastExternalSampleAt = 0;
 let toastTimer = 0;
 
 function toast(message: string): void {
@@ -121,28 +128,32 @@ const originLabel = (sample: Sample | null) => sample?.origin === 'PROTEUS' ? 'P
 const cm = (mm: number | null | undefined) => mm == null ? '—' : (mm / 10).toFixed(1);
 
 function updateMeasurements(): void {
+  const historical = latest?.historical === true || invalidMeasurement === 'replay';
+  const retained = source === 'serial' && serial.state !== 'connected';
+  $('distance-label').textContent = historical ? '历史测距' : retained && latest ? '最后测距' : '当前测距';
   $('distance').textContent = cm(latest?.distanceMm);
   $('angle').textContent = String(latest?.angle ?? angle);
   $('nearest').innerHTML = `${cm(history.nearest?.distanceMm)}<small> cm</small>`;
   $('trail-count').textContent = String(history.trail.length);
-  $('measure-status').textContent = latest === null ? '等待测量' : latest.status === 'OK' ? '发现障碍' : latest.status === 'TIMEOUT' ? '回波超时' : '无障碍回声';
-  $('measure-status').classList.toggle('warning', latest?.status === 'TIMEOUT' || (latest?.distanceMm != null && latest.distanceMm < 500));
-  $('source-tag').textContent = latest ? originLabel(latest) : source === 'demo' ? 'SIM 模拟' : '等待数据';
+  $('measure-status').textContent = invalidMeasurement ? '无可靠量程内测量' : latest === null ? '等待测量' : latest.status === 'OK' ? '发现障碍' : '无可靠量程内测量';
+  $('measure-status').title = invalidMeasurement ? '本次测量帧无效，等待新的有效样本。' : latest?.outsideRange ? '本帧距离超出250cm展示量程，不表示没有障碍。' : latest?.status === 'TIMEOUT' ? '回波超时，未取得可靠距离，不表示没有障碍。' : latest?.status === 'NO_HIT' ? '本次没有可靠的量程内结果，不表示没有障碍。' : '';
+  $('measure-status').classList.toggle('warning', !!invalidMeasurement || latest !== null && (latest.status !== 'OK' || (latest.distanceMm != null && latest.distanceMm < 500)));
+  $('source-tag').textContent = latest ? `${originLabel(latest)}${historical ? ' · 历史回放' : retained ? ' · 最后画面' : ''}` : invalidMeasurement ? historical ? 'Proteus 仿真 · 历史帧无效' : '输入测量帧无效' : source === 'demo' ? 'SIM 模拟' : '等待数据';
   $('sample-seq').textContent = `#${String(latest?.seq ?? 0).padStart(6, '0')}`;
-  $('footer-note').textContent = source === 'demo' ? '几何场景模拟 · 声速取 343 m/s' : `${latest ? originLabel(latest) : '外部数据'} · 角度与距离由输入驱动`;
+  $('footer-note').textContent = source === 'demo' ? '几何场景模拟 · 声速取 343 m/s' : invalidMeasurement ? `${historical ? '历史回放 · ' : ''}测量帧无效，等待新样本` : `${latest ? originLabel(latest) : '外部数据'} · ${historical ? '历史记录，不是当前测量' : retained ? '连接已结束，保留最后画面' : '角度与距离由输入驱动'}`;
 }
 function applySample(sample: Sample): void {
-  latest = sample; angle = sample.angle; history.add(sample);
+  latest = sample; invalidMeasurement = null; angle = sample.angle; history.add(sample);
   radar.update(history.trail, sample.angle); scene?.setMeasurement(sample, history.trail);
   updateMeasurements();
 }
 function clearResults(): void {
-  history.clear(); latest = null; pending = null;
+  history.clear(); latest = null; invalidMeasurement = null; external.clearDisplay();
   radar.update([], angle); scene?.setMeasurement(null, []); updateMeasurements();
 }
 function setPaused(value: boolean): void {
   paused = value; accumulator = 0;
-  if (!paused && pending && source !== 'demo') { applySample(pending); pending = null; }
+  applyExternalUpdate(external.setPaused(paused));
   updateControls();
 }
 function updateControls(): void {
@@ -167,6 +178,16 @@ function updateLiveStatus(): void {
     else if (Date.now() - lastExternalAt > 2000) { label = lastExternalAt ? '数据已超时' : '等待串口数据'; inactive = true; }
     else if (!paused) { label = '实时接收'; inactive = false; }
   }
+  if (source !== 'demo' && !paused && (source !== 'serial' || serial.state === 'connected')) {
+    if (external.phase === 'replay') { label = '历史回放'; inactive = false; }
+    else if (external.phase === 'complete' || external.phase === 'interrupted') {
+      label = external.phase === 'interrupted' ? '回放中断' : '回放完成';
+      label += latest?.historical || invalidMeasurement === 'replay' ? ' · 历史数据' : ' · 暂无记录'; inactive = true;
+    }
+  }
+  if (source === 'serial' && latest && !latest.historical) {
+    $('distance-label').textContent = serial.state !== 'connected' || Date.now() - lastExternalAt > 2000 ? '最后测距' : '当前测距';
+  }
   $('live-label').textContent = label; $('live-badge').classList.toggle('inactive', inactive);
 }
 function updateSteps(): void {
@@ -178,7 +199,7 @@ function updateSteps(): void {
   $('echo-title').textContent = lesson && !hit ? '等待超时' : '接收回波';
   $('step-description-0').textContent = lesson ? `探头转向 ${lessonSample.angle}°，准备测量。` : '舵机带动探头，朝向目标角度。';
   $('step-description-1').textContent = '短促的超声脉冲，向前出发。';
-  $('step-description-2').textContent = lesson && !hit ? '量程内无回声，等待到达超时。' : '声波遇到障碍，沿途返回。';
+  $('step-description-2').textContent = lesson && !hit ? '本次未取得可靠回声，等待到达超时。' : '声波遇到障碍，沿途返回。';
   $('step-description-3').textContent = lesson && teaching.stage === 3 ? hit ? `往返约 ${((lessonSample.distanceMm! * 2 / SOUND_MM_PER_US) / 1000).toFixed(2)} ms → ${cm(lessonSample.distanceMm)} cm` : '距离为 —，本次不生成命中点。' : '由往返时间，计算目标距离。';
 }
 function resetLesson(): void {
@@ -189,8 +210,9 @@ function resetLesson(): void {
   $('angle').textContent = String(value); updateSteps(); updateControls();
 }
 function setLesson(value: boolean): void {
+  if (!value && !lesson) { setPaused(false); return; }
   if (value && source !== 'demo') { changeSource('demo'); toast('分步教学已切换为内置模拟'); }
-  lesson = value; paused = false; accumulator = 0;
+  lesson = value; setPaused(false);
   if (value) resetLesson();
   else { teaching.reset(); clearResults(); updateSteps(); updateControls(); }
   $('device-caption').textContent = value ? '慢放一次回声，看见测量的每个瞬间。' : '探头转向哪里，扫描就发生在哪里。';
@@ -198,7 +220,7 @@ function setLesson(value: boolean): void {
 function changeSource(value: InputMode): void {
   if (source === value) return;
   if (source === 'serial') void serial.disconnect();
-  decoder.reset(); source = value; lesson = false; teaching.reset(); paused = false; lastExternalAt = 0; accumulator = 0;
+  decoder.reset(); external.reset(); source = value; lesson = false; teaching.reset(); paused = false; lastExternalAt = 0; lastExternalSampleAt = 0; accumulator = 0;
   $<HTMLSelectElement>('input-source').value = value;
   $('manual-section').hidden = value !== 'manual'; $('serial-section').hidden = value !== 'serial';
   $<HTMLSelectElement>('preset').disabled = value !== 'demo';
@@ -208,13 +230,21 @@ function changeSource(value: InputMode): void {
   scene?.setPreset(preset, value === 'demo'); clearResults(); updateSteps(); updateControls();
   log(`切换数据来源：${value === 'demo' ? '内置模拟' : value === 'manual' ? '字符串输入' : '浏览器串口'}`);
 }
+function applyExternalUpdate(update: DisplayUpdate): void {
+  if (update.clear) clearResults();
+  if (update.sample) applySample(update.sample);
+  if (update.invalid) { invalidMeasurement = update.invalid; updateMeasurements(); }
+}
 function receiveText(text: string): { good: number; bad: number } {
   let good = 0, bad = 0;
   for (const line of decoder.push(text)) {
     if (line.kind === 'sample') {
-      good++; lastExternalAt = Date.now(); log(encodeSample(line.sample), 'sample');
-      if (paused) pending = line.sample; else applySample(line.sample);
-    } else if (line.kind === 'error') { bad++; log(line.text, 'error'); }
+      good++; lastExternalAt = Date.now(); lastExternalSampleAt = lastExternalAt; log(encodeSample(line.sample), 'sample');
+      if (line.sample.outsideRange) log('本帧超出250cm展示量程，当前距离已置为无可靠量程内测量。');
+      applyExternalUpdate(external.receive(line));
+    } else if (line.kind === 'replay') {
+      lastExternalAt = Date.now(); log(line.text); applyExternalUpdate(external.receive(line));
+    } else if (line.kind === 'error') { bad++; log(line.text, 'error'); applyExternalUpdate(external.receive(line)); }
     else log(line.text);
   }
   updateLiveStatus(); return { good, bad };
@@ -225,8 +255,17 @@ const serial = new SerialConnection(text => { if (source === 'serial') receiveTe
   $<HTMLButtonElement>('disconnect-serial').disabled = state !== 'connected' && state !== 'connecting';
   $('disconnect-serial').textContent = state === 'connecting' ? '取消等待' : '断开';
   $<HTMLSelectElement>('baud').disabled = state === 'connected' || state === 'connecting';
-  if (state === 'connecting') { decoder.reset(); lastExternalAt = 0; pending = null; }
-  log(message, state === 'error' ? 'error' : 'info'); updateLiveStatus();
+  if (source === 'serial' && state === 'connecting') { decoder.reset(); external.reset(); external.setPaused(paused); lastExternalAt = 0; lastExternalSampleAt = 0; clearResults(); }
+  if (source === 'serial' && (state === 'idle' || state === 'error')) { decoder.reset(); external.disconnect(); }
+  log(message, state === 'error' ? 'error' : 'info'); updateMeasurements(); updateLiveStatus();
+});
+
+const classroom = mountClassroom($('classroom'), {
+  getSnapshot: () => captureSnapshot({
+    sample: latest, inputMode: source, paused, invalidMeasurement: invalidMeasurement !== null,
+    serialConnected: serial.state === 'connected', lastExternalSampleAt, now: Date.now(),
+  }),
+  notify: toast,
 });
 
 $('scan-mode').addEventListener('click', () => setLesson(false));
@@ -277,6 +316,7 @@ if (!serial.supported) $('serial-message').textContent = '当前浏览器未提�
 
 scene?.setPreset(preset, true); updateMeasurements(); updateControls();
 let previous = performance.now();
+let lastClassroomRefresh = 0;
 function frame(now: number): void {
   const dt = Math.min(now - previous, 100); previous = now;
   if (lesson) {
@@ -292,6 +332,8 @@ function frame(now: number): void {
     }
   }
   scene?.render(dt, paused, lesson && teaching.stage >= 1 ? { stage: teaching.stage, progress: teaching.progress, sample: lessonSample } : null);
-  updateLiveStatus(); requestAnimationFrame(frame);
+  updateLiveStatus();
+  if (now - lastClassroomRefresh >= 250) { classroom.refresh(); lastClassroomRefresh = now; }
+  requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

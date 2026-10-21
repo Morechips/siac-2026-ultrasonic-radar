@@ -1,0 +1,67 @@
+.classroom-panel{margin:20px 0 0;padding:25px 27px;background:#fcfdf9;border:1px solid #dfe7d8;border-radius:16px;color:var(--ink,#263f36)}
+.classroom-heading{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-bottom:20px}
+.classroom-heading h2{margin:8px 0 0;font-size:18px;font-weight:500}
+.classroom-count{padding:7px 11px;border:1px solid #dbe6d5;border-radius:99px;background:#edf4e8;color:#5a7c54;font-size:11px;white-space:nowrap;font-variant-numeric:tabular-nums}
+.classroom-grid{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(270px,.8fr);gap:25px}
+.classroom-task-picker{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:18px}
+.classroom-task-button{display:flex;align-items:center;gap:7px;border:1px solid #e0e7da;border-radius:8px;background:#fff;padding:10px 11px;color:#718269;font-size:11px;min-height:40px}
+.classroom-task-button>span{font-size:10px;color:#9ba88f;font-variant-numeric:tabular-nums}
+.classroom-task-button:hover{background:#f0f5e9}
+.classroom-task-button.active{border-color:#b9d2b2;background:#eaf3e6;color:#366d48}
+.classroom-task-button.active>span{color:#719b68}
+.classroom-task h3{margin:0 0 9px;font-size:15px;font-weight:550;line-height:1.7;color:#3f6548}
+.classroom-instruction{margin:0 0 16px;color:#829077;font-size:11px;line-height:1.9}
+.classroom-field-label{display:flex;align-items:center;gap:8px;margin-bottom:8px;color:#627d5c;font-size:11px}
+.classroom-field-label>span{font-size:10px;color:#9ea992}
+.classroom-panel .classroom-prediction{display:block;min-height:73px;margin:0;padding:10px 12px;border:1px solid #dce6d4;border-radius:9px;background:#fff;font:12px/1.8 "Segoe UI","Microsoft YaHei UI",sans-serif;color:#496a4a;resize:vertical}
+.classroom-prediction::placeholder{color:#b3bda6}
+.classroom-input-help{font-size:10px;line-height:1.8;color:#8d9b80;margin:7px 0 0}
+.classroom-insight{margin:15px 0 0;padding:10px 13px;border-left:2px solid #b6cfaa;background:#f0f5e9;border-radius:0 7px 7px 0;color:#7b916e;font-size:11px;line-height:1.8}
+.classroom-capture{display:flex;flex-direction:column;align-items:flex-start;min-width:0;border:1px solid #e1e9d9;background:#f5f8ee;border-radius:12px;padding:18px 20px}
+.classroom-capture-heading{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;font-size:11px;color:#829272}
+.classroom-sample-kind,.classroom-entry-kind{display:inline-block;font-size:9px;padding:4px 7px;color:#5c8257;background:#e9f1e2;border:1px solid #d8e6ce;border-radius:5px;white-space:nowrap}
+.classroom-sample-kind.historical,.classroom-entry-kind.historical{color:#946b32;background:#fff3dd;border-color:#ead6b5;font-weight:600}
+.classroom-preview{display:flex;align-items:baseline;gap:7px;margin-top:17px;width:100%;font-variant-numeric:tabular-nums}
+.classroom-preview strong{font-size:40px;font-weight:350;line-height:1.1;letter-spacing:-1px;color:#3d6d4f}
+.classroom-preview>span{font-size:11px;color:#91a07e}
+.classroom-preview .classroom-preview-angle{margin-left:auto;font-size:21px;color:#71906b;letter-spacing:-.5px}
+.classroom-preview-status{font-size:12px;color:#67825c;line-height:1.7;margin:11px 0 4px}
+.classroom-provenance{font-size:10px;line-height:1.8;color:#869779;margin:0;overflow-wrap:anywhere}
+.classroom-history-note{margin:11px 0 0;padding:8px 10px;border-radius:6px;background:#fff4df;color:#9a743d;font-size:10px;line-height:1.8}
+.classroom-panel .classroom-record{width:100%;margin-top:17px;min-height:40px}
+.classroom-availability{font-size:10px;line-height:1.8;margin:8px 0 0;color:#749169;min-height:18px}
+.classroom-capture.unavailable .classroom-availability{color:#9c8054}
+.classroom-records-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-top:25px;padding-top:20px;border-top:1px solid #e3eadc}
+.classroom-records-heading h3{font-size:13px;font-weight:550;color:#56714e;margin:0}
+.classroom-records-heading p{margin:7px 0 0;font-size:10px;line-height:1.7;color:#91a080}
+.classroom-record-actions{display:flex;align-items:center;gap:7px}
+.classroom-record-actions .button{min-height:36px;font-size:11px}
+.classroom-clear-confirm{display:flex;justify-content:space-between;align-items:center;gap:15px;margin:14px 0 0;padding:12px 14px;border:1px solid #e7d6b7;border-radius:8px;background:#fff8e9;color:#96753c;font-size:11px;line-height:1.7}
+.classroom-clear-confirm>div{display:flex;gap:7px;flex-shrink:0}
+.classroom-panel .classroom-danger{background:#a77843;color:#fff;border:1px solid #a77843}
+.classroom-panel .classroom-danger:hover{background:#926638}
+.classroom-local-note{margin:12px 0 11px;font-size:10px;line-height:1.8;color:#95a187}
+.classroom-table-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain;border:1px solid #e1e9d9;border-radius:9px;background:#fff;scrollbar-width:thin;scrollbar-color:#c7d7bc transparent}
+.classroom-table{border-collapse:collapse;width:100%;min-width:760px;text-align:left;font-size:11px;line-height:1.7;font-variant-numeric:tabular-nums;color:#617a59}
+.classroom-table th{background:#f1f6eb;color:#7c906f;font-size:10px;font-weight:500;padding:10px 12px;border-bottom:1px solid #e1e9d8;white-space:nowrap}
+.classroom-table td{padding:11px 12px;vertical-align:top;border-bottom:1px solid #edf1e7}
+.classroom-table tr:last-child td{border-bottom:0}
+.classroom-table td:first-child{white-space:nowrap;color:#90a080;font-size:10px}
+.classroom-table td:nth-child(3),.classroom-table td:nth-child(4){white-space:nowrap}
+.classroom-table .classroom-entry-source{display:block;margin-top:5px;font-size:10px;color:#91a17f;line-height:1.7;min-width:130px}
+.classroom-table .classroom-prediction-cell{max-width:210px;min-width:105px;overflow-wrap:anywhere;color:#8a9b79}
+.classroom-table .classroom-empty{padding:26px 15px;text-align:center;font-size:11px;color:#a5b194}
+.classroom-stats{margin-top:16px;border-top:1px solid #e3eadc;padding-top:14px}
+.classroom-stats summary{display:flex;align-items:center;gap:9px;width:fit-content;cursor:pointer;color:#6d8761;font-size:11px;padding:4px 0}
+.classroom-stats summary::before{content:"+";display:inline-block;font-size:15px;color:#a1b093;width:12px}
+.classroom-stats[open] summary::before{content:"−"}
+.classroom-stats summary>span{font-size:9px;color:#9aab88;padding:3px 6px;border-radius:4px;background:#eff4e9}
+.classroom-stats>p{font-size:10px;color:#94a381;margin:8px 0 10px;line-height:1.9}
+.classroom-stats-table{min-width:700px}
+.classroom-table .classroom-historical-cell{color:#9a743d;font-weight:550}
+.classroom-boundary{margin:15px 0 0;font-size:10px;line-height:1.9;color:#98a58a;max-width:1030px}
+.classroom-feedback{margin:10px 0 0;min-height:17px;color:#63845a;font-size:11px;line-height:1.8}
+.classroom-panel button:focus-visible,.classroom-panel textarea:focus-visible,.classroom-table-scroll:focus-visible,.classroom-stats summary:focus-visible{outline:3px solid #9ecbb7;outline-offset:3px}
+@media(max-width:1050px){.classroom-panel{padding:22px}.classroom-grid{gap:18px;grid-template-columns:minmax(0,1.2fr) minmax(250px,.8fr)}.classroom-task-picker{gap:5px}.classroom-task-button{font-size:10px;padding:9px}.classroom-capture{padding:16px}.classroom-task h3{font-size:14px}}
+@media(max-width:760px){.classroom-panel{padding:20px 17px;margin-top:17px}.classroom-heading{align-items:flex-start;margin-bottom:17px}.classroom-heading h2{font-size:16px}.classroom-heading .eyebrow{font-size:8px;letter-spacing:1.3px}.classroom-count{font-size:10px;padding:6px 9px}.classroom-grid{grid-template-columns:1fr}.classroom-task-picker{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.classroom-task-button{justify-content:center;font-size:10px;padding:10px 4px;white-space:normal;line-height:1.6;gap:4px}.classroom-task-button>span{font-size:9px}.classroom-capture{padding:17px}.classroom-preview{margin-top:12px}.classroom-preview strong{font-size:36px}.classroom-records-heading{align-items:flex-start;gap:10px;margin-top:21px}.classroom-record-actions{gap:3px;flex-shrink:0}.classroom-record-actions .button{padding:8px 9px;font-size:10px}.classroom-clear-confirm{align-items:flex-start;flex-direction:column;gap:10px}.classroom-clear-confirm>div{align-self:flex-end}.classroom-local-note,.classroom-boundary{font-size:9px}.classroom-task h3{font-size:14px}}
+@media(prefers-reduced-motion:reduce){.classroom-panel .button{transition:none}}

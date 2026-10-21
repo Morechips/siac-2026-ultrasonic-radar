@@ -12,6 +12,8 @@ export interface Sample {
   distanceMm: number | null;
   status: Status;
   origin: Origin;
+  historical?: boolean;
+  outsideRange?: boolean;
 }
 export type Obstacle =
   | { kind: 'box'; x: number; z: number; width: number; depth: number; height: number }
