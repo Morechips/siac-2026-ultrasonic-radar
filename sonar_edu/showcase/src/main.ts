@@ -85,6 +85,7 @@ document.querySelector('#app')!.innerHTML = `
     <section id="serial-section" hidden><div class="settings-section-heading"><h3>串口连接</h3><span class="source-tag">8N1</span></div><label class="field-label" for="baud">波特率</label><select class="field" id="baud"><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select><div class="serial-actions"><button class="button primary" id="connect-serial">${icon('link')}选择串口并连接</button><button class="button outline" id="disconnect-serial" disabled>断开</button></div><p class="field-help" id="serial-message" role="status">请使用桌面 Chrome；连接后等待数据。</p><p class="field-help">暂停仅冻结展示，后台继续接收。恢复时显示最新样本。</p></section>
     <section id="manual-section" hidden><h3>输入测量字符串</h3><p class="field-help">每行一笔测量；提交多行时按顺序更新轨迹。手动教学示例请标 SIM。</p><label class="sr-only" for="manual-input">测量字符串</label><textarea id="manual-input" spellcheck="false" rows="6">SCAN,1,60,1400,OK,SIM\nSCAN,2,90,850,OK,SIM\nSCAN,3,120,NA,TIMEOUT,SIM</textarea><button class="button primary" id="submit-manual">应用字符串 ${icon('arrow')}</button><p class="field-help" id="manual-message" role="status"></p></section>
     <details class="protocol-reference"><summary>查看数据协议 ${icon('chevron')}</summary><p>逐行 CSV · 距离单位 mm</p><code>SCAN,42,90,850,OK,SIM</code><dl><dt>42</dt><dd>序号（非负整数）</dd><dt>90</dt><dd>角度 0°～180°</dd><dt>850</dt><dd>显示量程 1～2500 mm；无可靠量程内测量用 NA</dd><dt>OK</dt><dd>OK / NO_HIT / TIMEOUT</dd><dt>SIM</dt><dd>SIM / PROTEUS / DEVICE</dd></dl><p>存储回放：LOG,序号,角度,距离或NA,状态，来源为 Proteus，始终标为历史。INFO,REPLAY_START/END 标记回放边界。</p><p>兼容现有固件11列CSV。0°向右，90°向前，180°向左。超出2500mm的有效帧显示为无可靠量程内测量。</p></details>
+    <section class="log-section"><div class="settings-section-heading"><h3>距离报警</h3><span class="source-tag">NEAR ALERT</span></div><label class="field-label" for="alarm-toggle"><input type="checkbox" id="alarm-toggle" checked> 开启近距报警</label><label class="field-label" for="alarm-threshold">报警距离（cm）</label><input class="field" id="alarm-threshold" type="number" min="5" max="250" step="1" value="50"><p class="field-help">测得的距离小于该值时，探测状态显示"近距报警"并高亮；关闭开关则只显示普通结果。阈值与开关只影响本机显示，不改变上传数据。</p></section>
     <section class="log-section"><div class="settings-section-heading"><h3>数据日志</h3><button class="text-button" id="clear-log">清空</button></div><ol id="log" aria-label="数据日志"><li class="log-info">实验室已就绪。</li></ol></section>
   </div></dialog>
   <div id="toast" role="status" aria-live="polite"></div>
@@ -102,6 +103,11 @@ let source: InputMode = 'demo';
 let preset: Preset = 'mixed';
 let lesson = false;
 let paused = false;
+/* 2026-10-21 near-range alarm (added by the engineering session; display only):
+ * the threshold is evaluated here from the distance already in the frame, so
+ * neither the firmware nor the SCAN/LOG protocol has to change. */
+let alarmEnabled = true;
+let alarmThresholdMm = 500;
 let angle = 90;
 let direction: 1 | -1 = 1;
 let sequence = 0;
@@ -135,9 +141,11 @@ function updateMeasurements(): void {
   $('angle').textContent = String(latest?.angle ?? angle);
   $('nearest').innerHTML = `${cm(history.nearest?.distanceMm)}<small> cm</small>`;
   $('trail-count').textContent = String(history.trail.length);
-  $('measure-status').textContent = invalidMeasurement ? '无可靠量程内测量' : latest === null ? '等待测量' : latest.status === 'OK' ? '发现障碍' : '无可靠量程内测量';
-  $('measure-status').title = invalidMeasurement ? '本次测量帧无效，等待新的有效样本。' : latest?.outsideRange ? '本帧距离超出250cm展示量程，不表示没有障碍。' : latest?.status === 'TIMEOUT' ? '回波超时，未取得可靠距离，不表示没有障碍。' : latest?.status === 'NO_HIT' ? '本次没有可靠的量程内结果，不表示没有障碍。' : '';
-  $('measure-status').classList.toggle('warning', !!invalidMeasurement || latest !== null && (latest.status !== 'OK' || (latest.distanceMm != null && latest.distanceMm < 500)));
+  const nearAlarm = alarmEnabled && latest !== null && latest.status === 'OK' &&
+    latest.distanceMm != null && latest.distanceMm < alarmThresholdMm;
+  $('measure-status').textContent = nearAlarm ? '近距报警' : invalidMeasurement ? '无可靠量程内测量' : latest === null ? '等待测量' : latest.status === 'OK' ? '发现障碍' : '无可靠量程内测量';
+  $('measure-status').title = nearAlarm ? `目标距离小于报警值 ${(alarmThresholdMm / 10).toFixed(0)} cm。` : invalidMeasurement ? '本次测量帧无效，等待新的有效样本。' : latest?.outsideRange ? '本帧距离超出250cm展示量程，不表示没有障碍。' : latest?.status === 'TIMEOUT' ? '回波超时，未取得可靠距离，不表示没有障碍。' : latest?.status === 'NO_HIT' ? '本次没有可靠的量程内结果，不表示没有障碍。' : '';
+  $('measure-status').classList.toggle('warning', !!invalidMeasurement || nearAlarm || latest !== null && latest.status !== 'OK');
   $('source-tag').textContent = latest ? `${originLabel(latest)}${historical ? ' · 历史回放' : retained ? ' · 最后画面' : ''}` : invalidMeasurement ? historical ? 'Proteus 仿真 · 历史帧无效' : '输入测量帧无效' : source === 'demo' ? 'SIM 模拟' : '等待数据';
   $('sample-seq').textContent = `#${String(latest?.seq ?? 0).padStart(6, '0')}`;
   $('footer-note').textContent = source === 'demo' ? '几何场景模拟 · 声速取 343 m/s' : invalidMeasurement ? `${historical ? '历史回放 · ' : ''}测量帧无效，等待新样本` : `${latest ? originLabel(latest) : '外部数据'} · ${historical ? '历史记录，不是当前测量' : retained ? '连接已结束，保留最后画面' : '角度与距离由输入驱动'}`;
@@ -273,6 +281,22 @@ $('teach-mode').addEventListener('click', () => setLesson(true));
 $('enter-lesson').addEventListener('click', () => setLesson(true));
 $('toggle-run').addEventListener('click', () => setPaused(!paused));
 $('clear-results').addEventListener('click', () => { clearResults(); toast('扫描结果已清空'); });
+/* near-range alarm controls (display only) */
+const alarmToggleEl = $<HTMLInputElement>('alarm-toggle');
+const alarmThresholdEl = $<HTMLInputElement>('alarm-threshold');
+alarmToggleEl.checked = alarmEnabled;
+alarmThresholdEl.value = String(Math.round(alarmThresholdMm / 10));
+alarmToggleEl.addEventListener('change', () => {
+  alarmEnabled = alarmToggleEl.checked;
+  updateMeasurements();
+  toast(alarmEnabled ? `近距报警已开启（< ${Math.round(alarmThresholdMm / 10)} cm）` : '近距报警已关闭');
+});
+alarmThresholdEl.addEventListener('change', () => {
+  const value = Number(alarmThresholdEl.value);
+  if (Number.isFinite(value) && value >= 5 && value <= 250) { alarmThresholdMm = Math.round(value * 10); }
+  alarmThresholdEl.value = String(Math.round(alarmThresholdMm / 10));
+  updateMeasurements();
+});
 $('reset-view').addEventListener('click', () => { scene?.resetCamera(); toast('视角已复位'); });
 $('fullscreen').addEventListener('click', async () => {
   try { if (document.fullscreenElement) await document.exitFullscreen(); else await document.documentElement.requestFullscreen(); }

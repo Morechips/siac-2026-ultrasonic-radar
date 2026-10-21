@@ -76,13 +76,17 @@
 #ifdef BUTTONS_ON_PA45
 #define BUTTON1   PA_DATA(0x10u)   /* PA4, pin 21 */
 #define BUTTON2   PA_DATA(0x20u)   /* PA5, pin 22 */
+#define BUTTON3   PA_DATA(0x40u)   /* PA6, pin 23 */
 #define B1_BIT    4u
 #define B2_BIT    5u
+#define B3_BIT    6u
 #else
-#define BUTTON1   PB_DATA(0x02u)   /* PB1, pin 30 */
-#define BUTTON2   PB_DATA(0x20u)   /* PB5, pin 44 */
+#define BUTTON1   PB_DATA(0x02u)   /* PB1, pin 30: start / stop */
+#define BUTTON2   PB_DATA(0x20u)   /* PB5, pin 44: scan speed */
+#define BUTTON3   PB_DATA(0x10u)   /* PB4, pin 43: replay log */
 #define B1_BIT    1u
 #define B2_BIT    5u
+#define B3_BIT    4u
 #endif
 #define SCL       PB_DATA(0x04u)   /* PB2 */
 #define SDA       PB_DATA(0x08u)   /* PB3 */
@@ -118,7 +122,7 @@ static void wait_us(uint32_t us)
 
 /* -------------------------------------------------------------------- uart */
 
-#define TX_SIZE 192u
+#define TX_SIZE 384u
 static char tx_buf[TX_SIZE];
 static uint32_t tx_head, tx_tail;
 
@@ -305,6 +309,36 @@ static uint32_t direction = 1u;
 static uint32_t running = 1u;
 static uint32_t sequence;
 
+/* Scan speed in frames of 20 ms per 3 degree step. The 20 ms servo frame is a
+ * hard floor and the serial link sets the real limit: one SCAN line is about
+ * 300 bits, so at 9600 baud the link carries ~3 frames per second and a
+ * 40 ms step (750 B/s) is the fastest level that still sends whole lines.
+ * 10 levels span 40 ms .. 400 ms, i.e. one sweep (61 steps) in 2.4 s .. 24 s. */
+static const uint32_t kSpeedSlots[] = { 2u, 3u, 4u, 5u, 6u, 8u, 10u, 12u, 16u, 20u };
+#define SPEED_LEVELS (sizeof(kSpeedSlots) / sizeof(kSpeedSlots[0]))
+static uint32_t speed_index = 0u;          /* 2 frames = 40 ms per step */
+
+static uint32_t speed_slots(void) { return kSpeedSlots[speed_index]; }
+static uint32_t speed_ms(void) { return kSpeedSlots[speed_index] * 20u; }
+
+/* Minimum interval between two SCAN lines, in 8-tick microseconds. */
+#define REPORT_MIN_US 80000u
+#define REPORT_MIN_TICKS (REPORT_MIN_US * TICKS_PER_US)
+static uint32_t last_report;
+
+static void report_speed(void)
+{
+    tx_text("INFO,SPEED=");
+    tx_num(speed_index + 1u);
+    tx_text("/");
+    tx_num(SPEED_LEVELS);
+    tx_text(",STEP_MS=");
+    tx_num(speed_ms());
+    tx_text(",SWEEP_MS=");
+    tx_num(61u * speed_ms());
+    tx_text("\r\n");
+}
+
 static const char *const status_names[5] = { "OK", "TIMEOUT", "TIMEOUT", "TIMEOUT", "NO_HIT" };
 
 static void advance_angle(void)
@@ -364,20 +398,21 @@ static void replay_step(void)
 
 /* ---------------------------------------------------------------- buttons */
 
-static uint32_t last1 = 1u, last2 = 1u;
-static uint32_t stable1, stable2;
-static uint32_t armed1, armed2;
+static uint32_t last1 = 1u, last3 = 1u;
+static uint32_t stable1, stable3;
+static uint32_t armed1, armed3;
 
 static uint32_t b1_level(void) { return (BUTTON1 >> B1_BIT) & 1u; }
 static uint32_t b2_level(void) { return (BUTTON2 >> B2_BIT) & 1u; }
+static uint32_t b3_level(void) { return (BUTTON3 >> B3_BIT) & 1u; }
 
 static void buttons_init(void)
 {
     last1 = b1_level();
-    last2 = b2_level();
-    stable1 = 0u; stable2 = 0u;
+    last3 = b3_level();
+    stable1 = 0u; stable3 = 0u;
     armed1 = (last1 != 0u) ? 1u : 0u;
-    armed2 = (last2 != 0u) ? 1u : 0u;
+    armed3 = (last3 != 0u) ? 1u : 0u;
 }
 
 static void debounce(uint32_t raw, uint32_t *last, uint32_t *stable, uint32_t *armed, uint32_t *pressed)
@@ -391,15 +426,19 @@ static void debounce(uint32_t raw, uint32_t *last, uint32_t *stable, uint32_t *a
     }
 }
 
-/* One line per second so a wiring fault is visible even when nothing happens:
- *   BTN,PB1=1,PB5=1   both released (correct resting state)
- *   BTN,PB1=0,PB5=1   button 1 held (or PB1 stuck low / pull-up missing)     */
+/* One line per second so a wiring fault is visible even when nothing happens.
+ *   BTN,PB1=1,PB5=1,PB4=1    all released (correct resting state)
+ *   BTN,PB1=1,PB5=0,...      button 2 held (or that pad stuck low)           */
 static void report_buttons(void)
 {
     tx_text("BTN,PB1=");
     tx_push((b1_level() != 0u) ? '1' : '0');
     tx_text(",PB5=");
     tx_push((b2_level() != 0u) ? '1' : '0');
+    tx_text(",PB4=");
+    tx_push((b3_level() != 0u) ? '1' : '0');
+    tx_text(",spd=");
+    tx_num(speed_index + 1u);
     tx_text(",ack_dev=");
     tx_push((ack_device == 0u) ? '0' : '1');
     tx_text(",ack_word=");
@@ -411,16 +450,38 @@ static void report_buttons(void)
 
 static void poll_buttons(void)
 {
-    uint32_t pressed1 = 0u, pressed2 = 0u;
+    uint32_t pressed1 = 0u, pressed3 = 0u;
+    static uint32_t b2_hold = 0u, b2_repeat = 0u;
 
     debounce(b1_level(), &last1, &stable1, &armed1, &pressed1);
-    debounce(b2_level(), &last2, &stable2, &armed2, &pressed2);
+    debounce(b3_level(), &last3, &stable3, &armed3, &pressed3);
 
-    if (pressed1 != 0u) {
+    if (pressed1 != 0u) {                   /* start / stop */
         running = (running != 0u) ? 0u : 1u;
         tx_text(running != 0u ? "INFO,RUN\r\n" : "INFO,STOP\r\n");
     }
-    if (pressed2 != 0u) {
+
+    /* Speed: one step on the first press, then auto-repeat while held so the
+     * control behaves like a continuous dial. */
+    if (b2_level() == 0u) {
+        b2_hold++;
+        if (b2_hold == 3u) {
+            speed_index = (speed_index + 1u) % SPEED_LEVELS;
+            report_speed();
+        } else if (b2_hold > 30u) {         /* 0.6 s after the first action */
+            b2_repeat++;
+            if (b2_repeat >= 10u) {         /* every 200 ms while held */
+                b2_repeat = 0u;
+                speed_index = (speed_index + 1u) % SPEED_LEVELS;
+                report_speed();
+            }
+        }
+    } else {
+        b2_hold = 0u;
+        b2_repeat = 0u;
+    }
+
+    if (pressed3 != 0u) {                   /* replay the stored log */
         if (replay_active == 0u) {
             replay_active = 1u;
             replay_slot = 0u;
@@ -452,8 +513,8 @@ static void init(void)
     PB_PUR = 0u;
     PB_DEN = (1u << 0) | (1u << 2) | (1u << 3);
 #else
-    PB_PUR = (1u << 1) | (1u << 5);
-    PB_DEN = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 5);
+    PB_PUR = (1u << 1) | (1u << 4) | (1u << 5);
+    PB_DEN = (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 5);
 #endif
     SERVO = 0u;
     SCL = SCL_BIT;
@@ -520,43 +581,66 @@ int main(void)
     uint32_t slot = 0u;
     uint32_t width;
     uint32_t heartbeat = 0u;
+    uint32_t replay_tick = 0u;
     unsigned status;
 
     init();
     buttons_init();
     wait_us(100000u);
 
-    tx_text("BOOT,LM3S317_RADAR_V11,9600_8N1,SONAR_3V3,EEPROM_24C02C,LOG31\r\n");
-    tx_text("INFO,BTN1_RUN_STOP,BTN2_REPLAY\r\n");
+    tx_text("BOOT,LM3S317_RADAR_V13,9600_8N1,SONAR_3V3,EEPROM_24C02C,LOG31\r\n");
+    tx_text("INFO,BTN1_RUN_STOP,BTN2_SPEED,BTN3_REPLAY\r\n");
+    report_speed();
     eeprom_selftest();
 
     for (;;) {
         uint32_t frame_start = ticks();
+        uint32_t slots = speed_slots();
 
         servo_pulse(angle);
 
-        if (slot == 0u) {
-            if (running != 0u) { advance_angle(); }
-        } else if (slot == 3u) {
+        if ((slot == 0u) && (running != 0u)) { advance_angle(); }
+
+        poll_buttons();
+
+        if (replay_active != 0u) {
+            /* One record every second frame: ~25 characters per 40 ms is well
+             * inside the 9600 baud budget. */
+            replay_tick++;
+            if ((replay_tick & 1u) == 0u) { replay_step(); }
+        }
+
+        if ((slot + 1u) == slots) {         /* last frame of this step: measure */
             if (running != 0u) {
                 uint32_t mm = 0u, valid = 0u;
                 status = measure(&width);
                 if (status == 0u) { mm = (width * 10u + 29u) / 58u; valid = 1u; }
-                report_scan(status, mm, valid);
-                log_store(angle, mm, valid, status);
+                /* Report rate cap: one SCAN line is ~300 bits, so 9600 baud
+                 * carries about 3 lines per simulated second. Proteus can run
+                 * faster than real time, so cap the reporting interval at 80 ms
+                 * of simulated time instead of following the step rate. The
+                 * servo keeps stepping; only some steps are reported, which is
+                 * what a fast sweep looks like anyway.
+                 * While replaying, live frames are suppressed: the replay stream
+                 * alone already fills the link. */
+                if ((replay_active == 0u) &&
+                    ((last_report == 0u) || (elapsed(last_report) >= REPORT_MIN_TICKS))) {
+                    last_report = ticks();
+                    report_scan(status, mm, valid);
+                    log_store(angle, mm, valid, status);
+                }
             }
-        } else if (slot == 1u) {
-            poll_buttons();
-        } else if (slot == 2u) {
-            if (replay_active != 0u) { replay_step(); }
             heartbeat++;
-            if (heartbeat >= 13u) { heartbeat = 0u; report_buttons(); }
+            if (heartbeat >= (1000u / speed_ms())) {
+                heartbeat = 0u;
+                report_buttons();
+            }
         }
 
         while (elapsed(frame_start) < FRAME_TICKS) { tx_drain(); }
         tx_drain();
 
-        slot = (slot + 1u) % SLOTS_PER_STEP;
+        slot = (slot + 1u) % slots;
     }
 }
 
